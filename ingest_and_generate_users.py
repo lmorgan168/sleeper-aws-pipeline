@@ -7,9 +7,11 @@ import time
 import json
 import resource
 import logging
+import uuid
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table("processed_items")
+table2 = dynamodb.Table("sleeper_api_requests")
 
 s3 = boto3.client("s3")
 
@@ -28,6 +30,29 @@ last_request_time = time.time()
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+def check_api_limit():
+    now = int(time.time())
+
+    response = table2.scan(
+        FilterExpression="expire_at >= :now",
+        ExpressionAttributeValues={":now": now}
+    )
+    request_count = len(response.get("Items", []))
+
+    return request_count
+
+def log_api_request():
+    now = int(time.time())
+    expire_at = now + 60
+
+    table2.put_item(
+        Item={
+            "request_id": str(uuid.uuid4()),
+            "timestamp": now,
+            "expire_at": expire_at
+        }
+    )
+
 def log_memory_usage(label):
     """Logs current and peak memory usage in MB"""
     usage = resource.getrusage(resource.RUSAGE_SELF)
@@ -36,26 +61,20 @@ def log_memory_usage(label):
 
 
 def get_sleeper_data(url, max_retries=3, backoff_factor=2):
-    global api_requests, last_request_time
-    
     retries = 0
     # If 1000 requests have been made within a minute, sleep
     while retries <= max_retries:
-        if api_requests >= REQUEST_LIMIT:
-            elapsed_time = time.time() - last_request_time
-            
-            if elapsed_time < REQUEST_WINDOW:
-                sleep_time = REQUEST_WINDOW - elapsed_time
-                logger.warning(f"Rate limit reached! Sleeping for {sleep_time:.2f} seconds...")
-                time.sleep(sleep_time)
-            api_requests = 0  # Reset counter after sleep
+        if check_api_limit() >= REQUEST_LIMIT:
+            sleep_time = 1
+            time.sleep(sleep_time)
+            continue
     
+        log_api_request()
+
         start_time = time.time()
         response = requests.get(url)
         elapsed_time = time.time() - start_time
     
-        api_requests += 1
-        last_request_time = time.time()
 
         if response.status_code == 200:
             logger.info(f"Successful request to {url} - Took {elapsed_time:.2f} seconds")
