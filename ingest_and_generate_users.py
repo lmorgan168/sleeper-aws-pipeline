@@ -119,8 +119,10 @@ def mark_as_processed(item_id, item_type, max_retries = 3):
         return
 
     table.put_item(Item={"id": item_id, "type": item_type, "timestamp": int(time.time())})
-    logger.info(f"Successfully moved {item_id} from users_to_process to {item_type}.")
-
+    if item_type == "user":
+        logger.info(f"Successfully moved {item_id} from users_to_process to {item_type}.")
+    else:
+        logger.info(f"Successfully marked {item_id} as processed {item_type}")
 
 def batch_write_items(table_name, items, max_retries = 3):
     if not items:
@@ -182,7 +184,8 @@ def lambda_handler(event, context):
     ## Need to create globalsecondaryindex for the dynamodb table first
     response = table.query(
         IndexName="type-index",
-        KeyConditionExpression="type = :type",
+        KeyConditionExpression="#t = :type",
+        ExpressionAttributeNames={"#t": "type"},
         ExpressionAttributeValues={":type": "users_to_process"},
         Limit=50
     )
