@@ -79,6 +79,7 @@ def is_processed(item_id, item_type):
     return "Item" in response
 
 def mark_as_processed(item_id, item_type):
+    table.delete_item(Key={"id": item_id, "type": "users_to_process"})
     table.put_item(Item={"id": item_id, "type": item_type, "timestamp": int(time.time())})
 
 def batch_write_items(table_name, items, max_retries = 3):
@@ -137,12 +138,13 @@ def lambda_handler(event, context):
     user_id = event.get("user_id", DEFAULT_USER_ID)
 
     log_memory_usage("Before DynamoDB table scan")
-    users_to_process = [item["id"] for item in table.scan(
-        FilterExpression="#type = :type",
-        ExpressionAttributeNames={"#type": "type"},
+    response = table.query(
+        IndexName="type-index",
+        KeyConditionExpression="type = :type",
         ExpressionAttributeValues={":type": "users_to_process"},
         Limit=50
-    ).get("Items", [])]
+    )
+    users_to_process = [item["id"] for item in response.get("Items", [])]
     
     log_memory_usage("After DynamoDB table scan")
 
@@ -187,7 +189,7 @@ def lambda_handler(event, context):
             if is_processed(league_id, "league"):
                 continue
 
-            mark_as_processed(league_id, "user")
+            mark_as_processed(league_id, "league")
 
             league_users = get_sleeper_data(f"{SLEEPER_API_BASE}/league/{league_id}/users")
             if league_users:
