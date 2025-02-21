@@ -138,6 +138,8 @@ def lambda_handler(event, context):
     user_id = event.get("user_id", DEFAULT_USER_ID)
 
     log_memory_usage("Before DynamoDB table scan")
+
+    ## Need to create globalsecondaryindex for the dynamodb table first
     response = table.query(
         IndexName="type-index",
         KeyConditionExpression="type = :type",
@@ -215,11 +217,10 @@ def lambda_handler(event, context):
                 draft_results = get_sleeper_data(f"{SLEEPER_API_BASE}/draft/{draft_id}/picks")
                 if not draft_results:
                     continue # Skip league if the draft picks are missing
-                draft_picks.extend(draft_results) ## draft_results are nested but have draft_id in them, so I just extend
-
-                bracket_id = league.get("bracket_id")
-                start_week = league["settings"].get("start_week")
-                last_scored_week = league["settings"].get("last_scored_week")
+                draft_picks.append(draft_results) ## draft_results are nested but have draft_id in them, so I just extend
+                if len(draft_picks) >= BATCH_SIZE:
+                    batch_write_to_s3(draft_picks, "drafts", "draft_picks")
+                    draft_picks = []
 
                 if league["settings"].get("best_ball") == 1:
                     best_ball_leagues.append(league)
