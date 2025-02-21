@@ -33,10 +33,11 @@ logger.setLevel(logging.INFO)
 def check_api_limit():
     now = int(time.time())
 
-    response = table2.scan(
-        FilterExpression="expire_at >= :now",
-        ExpressionAttributeValues={":now": now}
-    )
+    response = table2.query(
+    IndexName="expire-index",  # Use the GSI on expire_at
+    KeyConditionExpression="expire_at >= :now",
+    ExpressionAttributeValues={":now": now}
+)
     request_count = len(response.get("Items", []))
 
     return request_count
