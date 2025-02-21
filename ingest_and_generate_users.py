@@ -60,13 +60,18 @@ def log_memory_usage(label):
     logger.info(f"[MEMORY] {label} - Current: {memory_used:.2f} MB")
 
 
-def get_sleeper_data(url, max_retries=3, backoff_factor=2):
+def get_sleeper_data(url, max_retries=5, backoff_factor=2):
     retries = 0
     # If 1000 requests have been made within a minute, sleep
     while retries <= max_retries:
         if check_api_limit() >= REQUEST_LIMIT:
-            sleep_time = 1
+            if retries == max_retries:  
+                logger.error(f"🚨 API limit reached! Skipping request to {url} after {max_retries} retries.")
+                return None 
+            sleep_time = backoff_factor ** retries
+            logger.warning(f"API limit reached! Sleeping for {sleep_time:.2f} seconds...")
             time.sleep(sleep_time)
+            retries +=1
             continue
     
         log_api_request()
@@ -97,17 +102,33 @@ def is_processed(item_id, item_type):
     response = table.get_item(Key={"id": item_id, "type": item_type})
     return "Item" in response
 
-def mark_as_processed(item_id, item_type):
-    table.delete_item(Key={"id": item_id, "type": "users_to_process"})
+def mark_as_processed(item_id, item_type, max_retries = 3):
+    retries = 0
+    while retries < max_retries:
+        response = table.delete_item(Key={"id": item_id, "type": "users_to_process"})
+
+        if response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 200:
+            break
+            
+        logger.warning(f"Failed to delete {item_id} from users_to_process. Retrying...")
+        retries +=1
+        time.sleep(2 ** retries)
+
+    if retries == max_retries:
+        logger.error(f" Failed to delete {item_id} after {max_retries} retries. Skipping insert.")
+        return
+
     table.put_item(Item={"id": item_id, "type": item_type, "timestamp": int(time.time())})
+    logger.info(f"Successfully moved {item_id} from users_to_process to {item_type}.")
+
 
 def batch_write_items(table_name, items, max_retries = 3):
     if not items:
         return
 
     unique_items = {item["id"]["S"]: item for item in items}.values()
-
     dynamodb_client = boto3.client("dynamodb")
+
     MAX_BATCH_SIZE = 25
     for i in range(0, len(items), MAX_BATCH_SIZE):
         batch = list(unique_items)[i:i+MAX_BATCH_SIZE]
